@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Initialize lightweight environment
+        run: python scripts/maintenance.py init
+      - name: Install test dependencies in the isolated environment
+        run: |
+          "$HOME/.venvs/2md/bin/python" -m pip install pytest python-docx reportlab
+      - name: Offline boundary tests
+        run: |
+          "$HOME/.venvs/2md/bin/python" -m pytest tests -q
+      - name: Exercise real CLI without a model
+        run: |
+          printf 'Standalone conversion: Alpha=17, Beta=29.\n' > "$RUNNER_TEMP/source.txt"
+          python scripts/2md.py convert "$RUNNER_TEMP/source.txt" --output-dir "$RUNNER_TEMP/result" --vision off
+          python - "$RUNNER_TEMP/result/source" <<'PY'
+          import json, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          assert json.loads((root / 'conversion.json').read_text())['status'] == 'success'
+          assert 'Alpha=17, Beta=29' in (root / 'source.md').read_text()
+          PY

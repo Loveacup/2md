@@ -1,0 +1,45 @@
+name: Dependency reminders
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: dependency-reminders
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Prepare isolated lightweight dependency baseline
+        run: |
+          python -m venv "$HOME/.venvs/2md"
+          "$HOME/.venvs/2md/bin/python" -m pip install -r scripts/requirements-markitdown.txt
+      - name: Check official upstream metadata (never upgrade)
+        id: versions
+        continue-on-error: true
+        run: python scripts/maintenance.py check-updates --json > dependency-report.json
+      - name: Update one reminder issue
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('dependency-report.json', 'utf8'));
+            const cell = value => String(value ?? 'not installed').replaceAll('|', '&#124;').replace(/[\r\n]/g, ' ');
+            const rows = report.updates.map(r => `| ${cell(r.name)} | ${cell(r.current)} | ${cell(r.pinned ?? 'none')} | ${cell(r.latest ?? 'unavailable')} | ${cell(r.status)} |`);
+            const title = 'Dependency update reminder';
+            const marker = '<!-- skill-dependency-reminder -->';
+            const body = `${marker}\nChecked: ${report.checked_at}\n\nThis report checks project pins and a fresh CI environment, not your workstation. No dependencies were upgraded in the project. Run \`python scripts/maintenance.py check-updates\` locally to check your installed versions.\n\n| Dependency | Installed in CI | Project pin | Latest upstream | Status |\n|---|---|---|---|---|\n${rows.join('\n')}\n\nMetadata unavailable means **not verified**, not up to date. Review compatibility and run tests before any upgrade.\n\n[Workflow evidence](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {...context.repo, state: 'open', creator: 'github-actions[bot]', per_page: 100});
+            const previous = issues.find(i => !i.pull_request && i.title === title && i.body?.includes(marker));
+            if (previous) await github.rest.issues.update({...context.repo, issue_number: previous.number, body});
+            else await github.rest.issues.create({...context.repo, title, body});
+            if (report.overall !== 'ok') core.setFailed('Some dependency metadata could not be verified; see the reminder issue.');

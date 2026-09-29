@@ -1,0 +1,7 @@
+# Lightweight conversion environment; the Marker parser remains separately installed.
+markitdown[all]==0.1.8
+Pillow
+pypdfium2
+markdown-it-py
+CairoSVG==2.9.1
+tinycss2
